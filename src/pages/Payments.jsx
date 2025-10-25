@@ -226,12 +226,17 @@ export default function Payments() {
         <h2 className="text-2xl font-semibold mb-4">💵 Payments Management</h2>
 
         {/* Payment Form */}
-        <form onSubmit={handleSubmit} className="flex flex-wrap gap-3 mb-6">
-         <Select
+        <form onSubmit={handleSubmit} className="flex flex-wrap gap-3 mb-6 items-center justify-between w-full max-w-full overflow-x-auto">
+       <Select
+  isSearchable={true}
+  menuPlacement="auto"
+  menuShouldScrollIntoView={false}
+  menuPortalTarget={document.body}   // 🔹 ADD THIS LINE
   options={loans.map((loan) => ({
     value: loan.id,
     label: `${loan.ref_no} — ${loan.borrowers?.firstname || ""} ${loan.borrowers?.lastname || ""} (Rs.${loan.amount})`,
   }))}
+
   value={
     formData.loan_id
       ? {
@@ -243,7 +248,7 @@ export default function Payments() {
   }
   onChange={(selected) => handleLoanChange({ target: { value: selected?.value } })}
   placeholder="🔍 Type Loan Ref or Borrower Name..."
-  className="text-black flex-1"
+  className="text-black flex-1 min-w-[250px] z-50"   // 🔹 ADD z-50
   styles={{
     control: (base) => ({
       ...base,
@@ -253,6 +258,7 @@ export default function Payments() {
     }),
     singleValue: (base) => ({ ...base, color: "white" }),
     input: (base) => ({ ...base, color: "white" }),
+    menuPortal: (base) => ({ ...base, zIndex: 9999 }),   // 🔹 ADD THIS TOO
     menu: (base) => ({ ...base, backgroundColor: "#1a2238", color: "white" }),
     option: (base, state) => ({
       ...base,
@@ -263,10 +269,11 @@ export default function Payments() {
 />
 
 
+
           <input
             type="text"
             placeholder="Payee Name"
-            className="bg-[#202a40] text-white px-4 py-2 rounded-md flex-1"
+            className="bg-[#202a40] text-white px-4 py-2 rounded-md flex-1 min-w-[180px]"
             value={formData.payee}
             onChange={(e) => setFormData({ ...formData, payee: e.target.value })}
           />
@@ -274,7 +281,7 @@ export default function Payments() {
           <input
             type="number"
             placeholder="Payment Amount"
-            className="bg-[#202a40] text-white px-4 py-2 rounded-md w-40"
+            className="bg-[#202a40] text-white px-4 py-2 rounded-md w-full sm:w-40"
             value={formData.amount}
             onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
           />
@@ -282,7 +289,7 @@ export default function Payments() {
           <input
             type="number"
             placeholder="Penalty Amount"
-            className="bg-[#202a40] text-white px-4 py-2 rounded-md w-40"
+            className="bg-[#202a40] text-white px-4 py-2 rounded-md w-full sm:w-40"
             value={formData.penalty_amount}
             onChange={(e) =>
               setFormData({ ...formData, penalty_amount: e.target.value })
