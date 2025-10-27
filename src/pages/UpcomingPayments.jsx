@@ -7,154 +7,244 @@ import {
   AlertTriangle,
   Search,
   ChevronRight,
+  RefreshCcw,
+  Bell,
 } from "lucide-react";
 import { motion } from "framer-motion";
 
+// ✅ Helper: Convert UTC → Local (no timezone issues)
+function toLocalDate(dateString) {
+  if (!dateString) return "N/A";
+  const date = new Date(dateString);
+  const localTime = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return localTime.toISOString().split("T")[0];
+}
+
 export default function UpcomingPayments() {
-  const [payments, setPayments] = useState([]);
+  const [loans, setLoans] = useState([]);
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("All");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchUpcomingPayments();
+    fetchLoans();
+    const interval = setInterval(fetchLoans, 30000); // 🔄 auto refresh every 30s
+    return () => clearInterval(interval);
   }, []);
 
-  async function fetchUpcomingPayments() {
+  // 🔹 Fetch Released Loans
+   // 🔹 Fetch Released Loans
+    // 🔹 Fetch Released Loans
+  async function fetchLoans() {
+    setLoading(true);
     const { data, error } = await supabase
       .from("loan_list")
-      .select(
-        `id, ref_no, amount, date_released, date_created, borrower_id, 
-        borrowers(firstname, lastname, id_no), loan_plan(months)`
-      )
+      .select(`
+        id,
+        ref_no,
+        amount,
+        rate,
+        term,
+        status,
+        next_payment_date,
+        date_released,
+        first_payment_date,
+        paid_days,
+        daily_payment,
+        borrowers(firstname, lastname, id_no)
+      `)
       .eq("status", 3); // Released loans only
 
-    if (error) return console.error(error);
+    if (error) {
+      console.error("Error fetching loans:", error);
+      setLoading(false);
+      return;
+    }
 
     const today = new Date();
-    const tomorrow = new Date();
-    tomorrow.setDate(today.getDate() + 1);
 
     const formatted = data.map((loan) => {
-      const releaseDate = new Date(loan.date_released);
-      // ✅ Next Payment Date = Release date + 1 day (considered tomorrow), then +1 month
-      const nextPayment = new Date(releaseDate);
-      nextPayment.setDate(nextPayment.getDate() + 1);
-      nextPayment.setMonth(nextPayment.getMonth() + 1);
+      const release = loan.date_released
+        ? new Date(loan.date_released)
+        : null;
 
-      const dueDate = new Date(releaseDate);
-      dueDate.setMonth(releaseDate.getMonth() + loan.loan_plan?.months);
+      const releaseDateLocal = release
+        ? release.toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" })
+        : "Not yet released";
 
+      // ✅ next payment date එකට 1 day එකක් add කරනවා
+      let nextPayment = null;
+      if (loan.next_payment_date) {
+        const temp = new Date(loan.next_payment_date);
+        temp.setDate(temp.getDate() + 1);
+        nextPayment = temp;
+      }
+
+      const nextPaymentLocal = nextPayment
+        ? nextPayment.toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" })
+        : "N/A";
+
+      // 🔹 Due date = release date + term * 30 days
+      const dueDate = release
+        ? new Date(release.getTime() + (loan.term || 0) * 30 * 24 * 60 * 60 * 1000)
+        : null;
+
+      const dueDateLocal = dueDate
+        ? dueDate.toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" })
+        : "N/A";
+
+      // 🔹 Remaining days
+      const totalDays = (loan.term || 0) * 30;
+      const remainingDays = Math.max(totalDays - (loan.paid_days || 0), 0);
+
+      // 🔹 Determine payment status
       let label = "Upcoming";
-      let color = "bg-blue-500";
+      let color = "bg-blue-500 text-white";
       let icon = <ChevronRight size={16} />;
+      let daysLeft = "N/A";
 
-      const todayStr = today.toISOString().split("T")[0];
-      const tomorrowStr = tomorrow.toISOString().split("T")[0];
-      const nextPaymentStr = nextPayment.toISOString().split("T")[0];
+      if (nextPayment) {
+        const diffDays = Math.ceil(
+          (nextPayment - today) / (1000 * 60 * 60 * 24)
+        );
 
-      if (nextPaymentStr === todayStr) {
-        label = "Due Today";
-        color = "bg-yellow-500 text-black";
-        icon = <Clock size={16} />;
-      } else if (nextPaymentStr === tomorrowStr) {
-        label = "Due Tomorrow";
-        color = "bg-green-500 text-black";
-        icon = <CalendarDays size={16} />;
-      } else if (nextPayment < today) {
-        label = "Overdue";
-        color = "bg-red-600 text-white animate-pulse";
-        icon = <AlertTriangle size={16} />;
+        if (diffDays === 0) {
+          label = "Due Today";
+          color = "bg-yellow-400 text-black";
+          icon = <Clock size={16} />;
+        } else if (diffDays === 1) {
+          label = "Due Tomorrow";
+          color = "bg-green-400 text-black";
+          icon = <CalendarDays size={16} />;
+        } else if (diffDays < 0) {
+          label = "Overdue";
+          color = "bg-red-600 text-white animate-pulse";
+          icon = <AlertTriangle size={16} />;
+        }
+
+        daysLeft =
+          diffDays > 1
+            ? `${diffDays} days`
+            : diffDays === 1
+            ? "Tomorrow"
+            : diffDays === 0
+            ? "Today"
+            : `${Math.abs(diffDays)} days late`;
       }
 
       return {
+        id: loan.id,
+        refNo: loan.ref_no,
         borrowerName: `${loan.borrowers?.firstname || ""} ${
           loan.borrowers?.lastname || ""
         }`,
         idCard: loan.borrowers?.id_no || "N/A",
-        refNo: loan.ref_no,
-        releaseDate: releaseDate.toISOString().split("T")[0],
-        nextPayment: nextPaymentStr,
-        dueDate: dueDate.toISOString().split("T")[0],
+        releaseDate: releaseDateLocal,
+        nextPayment: nextPaymentLocal, // ✅ now always +1 day
+        dueDate: dueDateLocal,
+        totalDays,
+        remainingDays,
+        dailyPayment: loan.daily_payment,
+        daysLeft,
         label,
         color,
         icon,
       };
     });
 
-    // Sorting order: Today → Tomorrow → Overdue → Others
-    const sorted = formatted.sort((a, b) => {
-      const priority = (p) => {
-        if (p.label === "Due Today") return 1;
-        if (p.label === "Due Tomorrow") return 2;
-        if (p.label === "Overdue") return 3;
-        return 4;
-      };
-      return priority(a) - priority(b);
-    });
-
-    setPayments(sorted);
+    setLoans(formatted);
+    setLoading(false);
   }
 
-  const filtered = payments.filter(
-    (p) =>
-      p.borrowerName.toLowerCase().includes(search.toLowerCase()) ||
-      p.idCard.includes(search) ||
-      p.refNo.includes(search)
-  );
+
+
+  // 🔹 Filter + Search
+  const filtered = loans.filter((l) => {
+    const matchesSearch =
+      l.borrowerName.toLowerCase().includes(search.toLowerCase()) ||
+      l.idCard.includes(search) ||
+      l.refNo.includes(search);
+    const matchesFilter =
+      filter === "All" ||
+      (filter === "Today" && l.label === "Due Today") ||
+      (filter === "Tomorrow" && l.label === "Due Tomorrow") ||
+      (filter === "Overdue" && l.label === "Overdue");
+    return matchesSearch && matchesFilter;
+  });
 
   const count = {
-    today: payments.filter((p) => p.label === "Due Today").length,
-    tomorrow: payments.filter((p) => p.label === "Due Tomorrow").length,
-    overdue: payments.filter((p) => p.label === "Overdue").length,
+    today: loans.filter((l) => l.label === "Due Today").length,
+    tomorrow: loans.filter((l) => l.label === "Due Tomorrow").length,
+    overdue: loans.filter((l) => l.label === "Overdue").length,
   };
 
   return (
     <DashboardLayout>
       <div className="p-6 text-white">
-        <motion.h2
-          initial={{ x: -20, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          className="text-3xl font-bold mb-6 flex items-center gap-2 text-yellow-400"
-        >
-          <CalendarDays size={28} />
-          Upcoming Payments
-        </motion.h2>
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
+          <motion.h2
+            initial={{ x: -20, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            className="text-3xl font-bold flex items-center gap-2 text-yellow-400"
+          >
+            <CalendarDays size={28} /> Upcoming Payments
+          </motion.h2>
+
+          <button
+            onClick={fetchLoans}
+            className="flex items-center gap-2 bg-[#2a3355] px-4 py-2 rounded-lg hover:bg-[#374270] transition-all"
+          >
+            <RefreshCcw size={18} /> Refresh
+          </button>
+        </div>
 
         {/* Stat Cards */}
         <div className="grid md:grid-cols-3 sm:grid-cols-2 gap-6 mb-8">
-          <motion.div
-            whileHover={{ scale: 1.05 }}
-            className="bg-[#2a2e40] p-6 rounded-xl flex flex-col items-center border-l-4 border-yellow-400"
-          >
-            <Clock className="text-yellow-400 mb-2" size={30} />
-            <p className="text-yellow-400 font-semibold">Due Today</p>
-            <h3 className="text-4xl font-bold">{count.today}</h3>
-          </motion.div>
+          <StatCard
+            icon={<Clock size={30} />}
+            color="text-yellow-400"
+            label="Due Today"
+            value={count.today}
+            border="border-yellow-400"
+          />
+          <StatCard
+            icon={<CalendarDays size={30} />}
+            color="text-green-400"
+            label="Due Tomorrow"
+            value={count.tomorrow}
+            border="border-green-500"
+          />
+          <StatCard
+            icon={<AlertTriangle size={30} />}
+            color="text-red-500"
+            label="Overdue"
+            value={count.overdue}
+            border="border-red-500"
+            pulse
+          />
+        </div>
 
-          <motion.div
-            whileHover={{ scale: 1.05 }}
-            className="bg-[#1f3c2f] p-6 rounded-xl flex flex-col items-center border-l-4 border-green-500"
-          >
-            <CalendarDays className="text-green-400 mb-2" size={30} />
-            <p className="text-green-400 font-semibold">Due Tomorrow</p>
-            <h3 className="text-4xl font-bold">{count.tomorrow}</h3>
-          </motion.div>
-
-          <motion.div
-            whileHover={{ scale: 1.05 }}
-            className="bg-[#3a1f1f] p-6 rounded-xl flex flex-col items-center border-l-4 border-red-500"
-          >
-            <AlertTriangle className="text-red-500 mb-2 animate-pulse" size={30} />
-            <p className="text-red-500 font-semibold">Overdue</p>
-            <h3 className="text-4xl font-bold">{count.overdue}</h3>
-          </motion.div>
+        {/* Filter Buttons */}
+        <div className="flex flex-wrap gap-3 mb-4">
+          {["All", "Today", "Tomorrow", "Overdue"].map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-4 py-2 rounded-md ${
+                filter === f
+                  ? "bg-yellow-400 text-black"
+                  : "bg-[#2a3355] hover:bg-[#3b456b]"
+              }`}
+            >
+              {f}
+            </button>
+          ))}
         </div>
 
         {/* Search */}
         <div className="relative mb-6">
-          <Search
-            size={18}
-            className="absolute left-3 top-3 text-gray-400"
-          />
+          <Search size={18} className="absolute left-3 top-3 text-gray-400" />
           <input
             type="text"
             placeholder="Search borrower, ID, or loan ref..."
@@ -164,60 +254,98 @@ export default function UpcomingPayments() {
           />
         </div>
 
-        {/* Payments Table */}
+        {/* Table */}
         <div className="bg-[#1a2238] p-6 rounded-xl shadow-lg overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
-            <thead className="bg-[#2f3a5c] text-yellow-400">
-              <tr>
-                <th className="p-3 text-left">Borrower</th>
-                <th className="p-3 text-left">ID Card</th>
-                <th className="p-3 text-left">Loan Ref</th>
-                <th className="p-3 text-left">Release Date</th>
-                <th className="p-3 text-left">Next Payment Date</th>
-                <th className="p-3 text-left">Loan Due Date</th>
-                <th className="p-3 text-left">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length > 0 ? (
-                filtered.map((p, i) => (
-                  <motion.tr
-                    key={i}
-                    whileHover={{ scale: 1.01 }}
-                    className={`border-b border-gray-700 hover:bg-[#2f3a5c] transition-all ${
-                      p.label === "Overdue" ? "bg-red-900/20 animate-pulse" : ""
-                    }`}
-                  >
-                    <td className="p-3">{p.borrowerName}</td>
-                    <td className="p-3">{p.idCard}</td>
-                    <td className="p-3 text-yellow-300 font-semibold">{p.refNo}</td>
-                    <td className="p-3">{p.releaseDate}</td>
-                    <td className="p-3">{p.nextPayment}</td>
-                    <td className="p-3">{p.dueDate}</td>
-                    <td className="p-3">
-                      <span
-                        className={`px-3 py-1 rounded-full flex items-center gap-2 justify-center w-fit ${p.color}`}
-                      >
-                        {p.icon}
-                        {p.label}
-                      </span>
-                    </td>
-                  </motion.tr>
-                ))
-              ) : (
+          {loading ? (
+            <p className="text-center text-gray-400 py-10">
+              Loading upcoming payments...
+            </p>
+          ) : (
+            <table className="w-full text-sm border-collapse">
+              <thead className="bg-[#2f3a5c] text-yellow-400">
                 <tr>
-                  <td
-                    colSpan="7"
-                    className="p-4 text-center text-gray-400 italic"
-                  >
-                    No upcoming payments found.
-                  </td>
+                  <th className="p-3 text-left">Borrower</th>
+                  <th className="p-3 text-left">NIC</th>
+                  <th className="p-3 text-left">Loan Ref</th>
+                  <th className="p-3 text-left">Release Date</th>
+                  <th className="p-3 text-left">Next Payment</th>
+                  <th className="p-3 text-left">Due Date</th>
+                  <th className="p-3 text-left">Days Left</th>
+                  <th className="p-3 text-left">Remaining Days</th>
+                  <th className="p-3 text-left">Status</th>
+                  <th className="p-3 text-center">Action</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filtered.length > 0 ? (
+                  filtered.map((l, i) => (
+                    <motion.tr
+                      key={i}
+                      whileHover={{ scale: 1.01 }}
+                      className={`border-b border-gray-700 hover:bg-[#2f3a5c] transition-all ${
+                        l.label === "Overdue"
+                          ? "bg-red-900/20 animate-pulse"
+                          : ""
+                      }`}
+                    >
+                      <td className="p-3">{l.borrowerName}</td>
+                      <td className="p-3">{l.idCard}</td>
+                      <td className="p-3 text-yellow-300 font-semibold">
+                        {l.refNo}
+                      </td>
+                      <td className="p-3">{l.releaseDate}</td>
+                      <td className="p-3">{l.nextPayment}</td>
+                      <td className="p-3">{l.dueDate}</td>
+                      <td className="p-3">{l.daysLeft}</td>
+                      <td className="p-3">{l.remainingDays}</td>
+                      <td className="p-3">
+                        <span
+                          className={`px-3 py-1 rounded-full flex items-center gap-2 justify-center w-fit ${l.color}`}
+                        >
+                          {l.icon}
+                          {l.label}
+                        </span>
+                      </td>
+                      <td className="p-3 text-center">
+                        {l.label === "Overdue" && (
+                          <button className="bg-yellow-500 hover:bg-yellow-600 text-black px-3 py-1 rounded-md flex items-center gap-1 mx-auto">
+                            <Bell size={14} /> Remind
+                          </button>
+                        )}
+                      </td>
+                    </motion.tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td
+                      colSpan="10"
+                      className="p-4 text-center text-gray-400 italic"
+                    >
+                      No upcoming payments found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
     </DashboardLayout>
+  );
+}
+
+// 💳 Stat Card Component
+function StatCard({ icon, color, label, value, border, pulse }) {
+  return (
+    <motion.div
+      whileHover={{ scale: 1.05 }}
+      className={`bg-[#2a2e40] p-6 rounded-xl flex flex-col items-center border-l-4 ${border}`}
+    >
+      <div className={`${color} mb-2 ${pulse ? "animate-pulse" : ""}`}>
+        {icon}
+      </div>
+      <p className={`${color} font-semibold`}>{label}</p>
+      <h3 className="text-4xl font-bold">{value}</h3>
+    </motion.div>
   );
 }

@@ -32,6 +32,19 @@ export default function Loans() {
     fetchLoans();
   }, []);
 
+  async function fetchLoanPlans() {
+  const { data, error } = await supabase
+    .from("loan_plan")
+    .select("id, months, interest_percentage");
+
+  if (error) {
+    console.error("Error fetching loan plans:", error.message);
+    return;
+  }
+
+  setLoanPlans(data || []);
+}
+
   async function fetchBorrowers() {
     const { data } = await supabase.from("borrowers").select("id, firstname, lastname");
     setBorrowers(data || []);
@@ -42,27 +55,36 @@ export default function Loans() {
     setLoanTypes(data || []);
   }
 
-  async function fetchLoanPlans() {
-    const { data } = await supabase.from("loan_plan").select("id, months, interest_percentage");
-    setLoanPlans(data || []);
+    async function fetchLoans() {
+    const { data, error } = await supabase
+      .from("loan_list")
+      .select(`
+        id, borrower_id, loan_type_id, plan_id, ref_no, amount, purpose, status, rate, term,
+        date_created, date_released, next_payment_date,
+        borrowers(firstname, lastname, id_no),
+        loan_types(type_name),
+        loan_plan(months, interest_percentage),
+        payments(amount)
+      `)
+      .order("id", { ascending: false });
+
+    if (error) {
+      console.error("Error fetching loans:", error);
+      return;
+    }
+
+
+
+    // group total payments for each loan
+    const withPayments = (data || []).map((loan) => {
+      const total_paid = loan.payments?.reduce((sum, p) => sum + (p.amount || 0), 0) || 0;
+      return { ...loan, total_paid };
+    });
+
+    setLoans(withPayments);
+    await autoCloseFullyPaidLoans();
   }
 
-  async function fetchLoans() {
-  const { data } = await supabase
-  .from("loan_list")
-  .select(
-  `id, borrower_id, loan_type_id, plan_id, ref_no, amount, purpose, status, rate, term, date_created, date_released,
-   borrowers(firstname, lastname, id_no),
-   loan_types(type_name),
-   loan_plan(months, interest_percentage)`
-)
-
-  .order("id", { ascending: false });
-
-
-  setLoans(data || []);
-  await autoCloseFullyPaidLoans();
-}
 
   async function autoCloseFullyPaidLoans() {
   // fetch released loans (status = 3)
@@ -100,27 +122,32 @@ export default function Loans() {
 }
 
 
-  function handleCalculate() {
-    const amount = parseFloat(formData.amount) || 0;
-    const selectedPlan = loanPlans.find((p) => p.id == formData.plan_id);
-    if (!amount || !selectedPlan) {
-      Swal.fire("Error", "Please select plan and amount correctly!", "error");
-      return;
-    }
-
-    const rate = selectedPlan.interest_percentage;
-    const term = selectedPlan.months;
-    const monthlyInterest = (amount * rate) / 100;
-    const totalInterest = monthlyInterest * term;
-    const totalPayable = amount + totalInterest;
-    const monthlyPayment = totalPayable / term;
-
-    setCalcSummary({
-      monthlyInterest: monthlyInterest.toFixed(2),
-      monthlyPayment: monthlyPayment.toFixed(2),
-      totalPayable: totalPayable.toFixed(2),
-    });
+ function handleCalculate() {
+  const amount = parseFloat(formData.amount) || 0;
+  const selectedPlan = loanPlans.find((p) => p.id == formData.plan_id);
+  if (!amount || !selectedPlan) {
+    Swal.fire("Error", "Please select plan and amount correctly!", "error");
+    return;
   }
+
+  const rate = selectedPlan.interest_percentage;
+  const months = selectedPlan.months;
+  const totalInterest = amount * (rate / 100) * months;
+  const totalPayable = amount + totalInterest;
+  const totalDays = months * 30;
+  const dailyPayment = totalPayable / totalDays;
+
+  setCalcSummary({
+    totalInterest: totalInterest.toFixed(2),
+    totalPayable: totalPayable.toFixed(2),
+    dailyPayment: dailyPayment.toFixed(2),
+    totalDays,
+    months,
+    rate,
+    amount,
+  });
+}
+
 
   async function handleAddLoan(e) {
     e.preventDefault();
@@ -154,6 +181,7 @@ export default function Loans() {
       rate: selectedPlan.interest_percentage,
       term: selectedPlan.months,
       status: 0,
+      date_created: new Date().toLocaleDateString("en-CA"),
     };
 
     const { error } = await supabase.from("loan_list").insert([payload]);
@@ -223,13 +251,77 @@ export default function Loans() {
   setCalcSummary({ monthlyInterest: 0, monthlyPayment: 0, totalPayable: 0 });
   fetchLoans();
 }
+async function handleStatusChange(loanId, newStatus) {
+  if (newStatus === 3) {
+    // Loan Released 🟢
+    const now = new Date();
+    const releaseDate = now.toISOString().split("T")[0]; // yyyy-mm-dd
 
+    const firstPayment = new Date(now);
+    firstPayment.setDate(firstPayment.getDate() + 1);
+    const firstPaymentDate = firstPayment.toISOString().split("T")[0];
+    const nextPaymentDate = firstPaymentDate;
 
-  async function handleStatusChange(loanId, newStatus) {
-    await supabase.from("loan_list").update({ status: newStatus }).eq("id", loanId);
-    fetchLoans();
+    const { error } = await supabase
+      .from("loan_list")
+      .update({
+        status: 3,
+        date_released: releaseDate, // set only now
+        first_payment_date: firstPaymentDate,
+        next_payment_date: nextPaymentDate,
+        paid_days: 0,
+      })
+      .eq("id", loanId);
+
+    if (error) {
+      console.error(error);
+      Swal.fire("Error", "Failed to release loan!", "error");
+      return;
+    }
+
+    Swal.fire({
+      icon: "success",
+      title: "Loan Released!",
+      text: `Loan released successfully on ${releaseDate}`,
+      background: "#1a1f2e",
+      color: "#fff",
+    });
+  } else if (newStatus === 1) {
+    // Loan Pending 🟡
+    const { error } = await supabase
+      .from("loan_list")
+      .update({
+        status: 1,
+        date_released: null, // reset
+        first_payment_date: null,
+        next_payment_date: null,
+        paid_days: 0,
+      })
+      .eq("id", loanId);
+
+    if (error) {
+      console.error(error);
+      Swal.fire("Error", "Failed to update loan status!", "error");
+      return;
+    }
   }
 
+  fetchLoans(); // refresh UI
+}
+
+
+
+
+// 🧮 Calculate next payment date for monthly loan
+function getNextPaymentDate(createdAt) {
+  if (!createdAt) return "N/A";
+  const base = new Date(createdAt + "T00:00:00"); // avoid timezone shift
+  const next = new Date(base);
+  next.setMonth(base.getMonth() + 1); // add one month
+  return next.toLocaleDateString("en-CA"); // yyyy-mm-dd format
+}
+
+  // 🔵 Loan Status Definitions
   const statusLabels = {
     0: "Pending",
     1: "Approved",
@@ -245,13 +337,37 @@ export default function Loans() {
     3: "bg-blue-500",
     4: "bg-gray-500",
   };
-function getNextPaymentDate(createdAt) {
-  if (!createdAt) return "N/A";
-  const next = new Date(createdAt);
-  next.setDate(next.getDate() + 1); // add 1 day (release considered tomorrow)
-  next.setMonth(next.getMonth() + 1); // then add 1 month
-  return next.toISOString().split("T")[0];
+// 🧩 Safe date formatter to avoid "Invalid Date"
+// 🧩 Safe date formatter to handle Supabase timestamps
+function formatDateSafe(dateValue) {
+  if (!dateValue) return "N/A";
+  
+  const dateObj = new Date(dateValue);
+  if (isNaN(dateObj.getTime())) return "N/A";
+
+  return dateObj.toLocaleDateString("en-CA"); // yyyy-mm-dd
 }
+
+
+  // 🔴 Determine overdue color for next payment
+  function getNextPaymentStatus(loan) {
+    if (!loan.next_payment_date) return "text-gray-300";
+
+    const today = new Date();
+    const nextDate = new Date(loan.next_payment_date + "T00:00:00");
+
+    // Payment check
+    const hasPayment = loan.total_paid && loan.total_paid > 0;
+
+    if (!hasPayment && nextDate < today && loan.status === 3) {
+      return "text-red-400 font-semibold"; // Overdue
+    }
+
+    return "text-white"; // Normal
+  }
+
+  
+
   // ✏️ Edit Loan Function (FULL AUTO-FILL)
 async function handleEditLoan(loan) {
   setEditingLoan(loan);
@@ -263,11 +379,9 @@ async function handleEditLoan(loan) {
     purpose: loan.purpose || "",
   });
 
-  setCalcSummary({
-    monthlyInterest: (loan.amount * (loan.rate / 100)).toFixed(2),
-    monthlyPayment: ((loan.amount + loan.amount * (loan.rate / 100) * loan.term) / loan.term).toFixed(2),
-    totalPayable: (loan.amount + loan.amount * (loan.rate / 100) * loan.term).toFixed(2),
-  });
+
+
+
 
   Swal.fire({
     icon: "info",
@@ -394,17 +508,60 @@ async function handleEditLoan(loan) {
         </form>
 
         {calcSummary.totalPayable > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-[#1e2b48] p-4 rounded-lg mb-6 shadow-lg"
-          >
-            <h3 className="text-lg font-semibold mb-2">💡 Calculation Summary</h3>
-            <p>Monthly Interest: Rs. {calcSummary.monthlyInterest}</p>
-            <p>Monthly Payment: Rs. {calcSummary.monthlyPayment}</p>
-            <p>Total Payable: Rs. {calcSummary.totalPayable}</p>
-          </motion.div>
-        )}
+  <motion.div
+    initial={{ opacity: 0, y: -10 }}
+    animate={{ opacity: 1, y: 0 }}
+    transition={{ duration: 0.3 }}
+    className="bg-gradient-to-r from-[#1b253b] to-[#222c46] border border-[#2f3c5f] p-6 rounded-2xl mb-6 shadow-lg"
+  >
+    <h3 className="text-xl font-semibold mb-4 text-yellow-400 flex items-center gap-2">
+      📊 Daily Loan Summary
+    </h3>
+
+    <div className="grid md:grid-cols-3 sm:grid-cols-2 grid-cols-1 gap-4 text-sm">
+      <div className="bg-[#1a2238] p-3 rounded-lg text-center">
+        <p className="text-gray-400">💰 Loan Amount</p>
+        <p className="text-lg font-bold text-green-400">
+          Rs. {calcSummary.amount}
+        </p>
+      </div>
+
+      <div className="bg-[#1a2238] p-3 rounded-lg text-center">
+        <p className="text-gray-400">📈 Interest Rate</p>
+        <p className="text-lg font-bold text-blue-400">{calcSummary.rate}%</p>
+      </div>
+
+      <div className="bg-[#1a2238] p-3 rounded-lg text-center">
+        <p className="text-gray-400">🧮 Loan Period</p>
+        <p className="text-lg font-bold text-yellow-400">
+          {calcSummary.months} months ({calcSummary.totalDays} days)
+        </p>
+      </div>
+
+      <div className="bg-[#1a2238] p-3 rounded-lg text-center">
+        <p className="text-gray-400">💵 Daily Payment</p>
+        <p className="text-lg font-bold text-yellow-400">
+          Rs. {calcSummary.dailyPayment}
+        </p>
+      </div>
+
+      <div className="bg-[#1a2238] p-3 rounded-lg text-center">
+        <p className="text-gray-400">💸 Total Payable</p>
+        <p className="text-lg font-bold text-green-400">
+          Rs. {calcSummary.totalPayable}
+        </p>
+      </div>
+
+      <div className="bg-[#1a2238] p-3 rounded-lg text-center">
+        <p className="text-gray-400">📆 Total Interest</p>
+        <p className="text-lg font-bold text-blue-400">
+          Rs. {calcSummary.totalInterest}
+        </p>
+      </div>
+    </div>
+  </motion.div>
+)}
+
 
         {/* Loan Table */}
         <table className="w-full bg-[#1a2238] rounded-lg overflow-hidden text-sm">
@@ -418,70 +575,112 @@ async function handleEditLoan(loan) {
               <th className="p-3 text-left">Amount</th>
               <th className="p-3 text-left">Purpose</th>
               <th className="p-3 text-left">Date Released</th>
-              <th className="p-3 text-left">Next Payment</th>
               <th className="p-3 text-left">Status</th>
               <th className="p-3 text-center">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {loans.map((loan) => (
-              <tr key={loan.id} className="border-b border-gray-700 hover:bg-[#2a3552] transition-all duration-300">
-                <td className="p-3">{loan.ref_no}</td>
-                <td className="p-3">
-                  {loan.borrowers?.firstname} {loan.borrowers?.lastname}
-                </td>
-                <td className="p-3">{loan.borrowers?.id_no || "N/A"}</td>
-                <td className="p-3">{loan.loan_types?.type_name}</td>
-                <td className="p-3">
-                  {loan.term} mo @ {loan.rate}%
-                </td>
-                <td className="p-3">Rs.{loan.amount}</td>
-                <td className="p-3">{loan.purpose}</td>
-                <td className="p-3">{new Date(loan.date_created).toISOString().split("T")[0]}</td>
-                <td className="p-3">{getNextPaymentDate(loan.date_created)}</td>
-                <td className="p-3">
-                  <motion.div
-                    initial={{ scale: 0.8, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    transition={{ duration: 0.4 }}
-                    className={`px-3 py-1 rounded-full text-black font-semibold text-center ${statusColors[loan.status]}`}
-                  >
-                    {statusLabels[loan.status]}
-                  </motion.div>
-                </td>
-                <td className="p-3 flex justify-center gap-2">
-  <select
-    className="bg-[#202a40] text-white px-2 py-1 rounded-md"
-    value={loan.status}
-    onChange={(e) => handleStatusChange(loan.id, parseInt(e.target.value))}
-  >
-    {Object.entries(statusLabels).map(([key, value]) => (
-      <option key={key} value={key}>
-        {value}
-      </option>
-    ))}
-  </select>
+  {loans.map((loan) => (
+    <tr
+      key={loan.id}
+      className="border-b border-gray-700 hover:bg-[#2a3552] transition-all duration-300"
+    >
+      {/* 🔹 Reference No */}
+      <td className="p-3">{loan.ref_no}</td>
 
-  {/* ✅ Connect Edit Button */}
-  <button
-    onClick={() => handleEditLoan(loan)}
-    className="bg-blue-500 px-3 py-1 rounded-md text-black font-semibold hover:bg-blue-600"
-  >
-    Edit
-  </button>
+      {/* 🔹 Borrower Name */}
+      <td className="p-3">
+        {loan.borrowers?.firstname} {loan.borrowers?.lastname}
+      </td>
 
-  {/* ✅ Connect Delete Button */}
-  <button
-    onClick={() => handleDeleteLoan(loan.id)}
-    className="bg-red-500 px-3 py-1 rounded-md text-black font-semibold hover:bg-red-600"
-  >
-    Delete
-  </button>
+      {/* 🔹 Borrower ID */}
+      <td className="p-3">{loan.borrowers?.id_no || "N/A"}</td>
+
+      {/* 🔹 Loan Type */}
+      <td className="p-3">{loan.loan_types?.type_name}</td>
+
+      {/* 🔹 Plan + Daily Payment */}
+      <td className="p-3">
+        {loan.term} mo @ {loan.rate}%<br />
+       <span className="text-yellow-400 text-xs">
+  💰 Daily: Rs.{(() => {
+    const amount = Number(loan.amount || 0);
+    const months = Number(loan.loan_plan?.months || 0);
+    const rate = Number(loan.loan_plan?.interest_percentage || 0);
+    if (!amount || !months || !rate) return "0.00";
+    const totalInterest = amount * (rate / 100) * months;
+    const totalPayable = amount + totalInterest;
+    const totalDays = months * 30;
+    const dailyPayment = totalPayable / totalDays;
+    return dailyPayment.toFixed(2);
+  })()}
+</span>
+
+      </td>
+
+      {/* 🔹 Amount */}
+      <td className="p-3">Rs.{loan.amount}</td>
+
+      {/* 🔹 Purpose */}
+      <td className="p-3">{loan.purpose || "—"}</td>
+
+     
+{/* 🔹 Date Released */}
+<td className="p-3 text-gray-300">
+  {loan.status === 3
+    ? formatDateSafe(loan.date_released)
+    : "Not yet released"}
 </td>
 
-              </tr>
-            ))}
-          </tbody>
+     
+
+      {/* 🔹 Status */}
+      <td className="p-3">
+        <motion.div
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.4 }}
+          className={`px-3 py-1 rounded-full text-black font-semibold text-center ${statusColors[loan.status]}`}
+        >
+          {statusLabels[loan.status]}
+        </motion.div>
+      </td>
+
+      {/* 🔹 Actions */}
+      <td className="p-3 flex justify-center gap-2">
+        {/* Status Selector */}
+        <select
+          className="bg-[#202a40] text-white px-2 py-1 rounded-md"
+          value={loan.status}
+          onChange={(e) => handleStatusChange(loan.id, parseInt(e.target.value))}
+        >
+          {Object.entries(statusLabels).map(([key, value]) => (
+            <option key={key} value={key}>
+              {value}
+            </option>
+          ))}
+        </select>
+
+        {/* Edit Button */}
+        <button
+          onClick={() => handleEditLoan(loan)}
+          className="bg-blue-500 px-3 py-1 rounded-md text-black font-semibold hover:bg-blue-600"
+        >
+          Edit
+        </button>
+
+        {/* Delete Button */}
+        <button
+          onClick={() => handleDeleteLoan(loan.id)}
+          className="bg-red-500 px-3 py-1 rounded-md text-black font-semibold hover:bg-red-600"
+        >
+          Delete
+        </button>
+      </td>
+    </tr>
+  ))}
+</tbody>
+
         </table>
       </div>
     </DashboardLayout>

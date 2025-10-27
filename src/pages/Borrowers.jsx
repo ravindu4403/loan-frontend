@@ -7,6 +7,7 @@ import Alert from "../lib/alert";
 export default function Borrowers() {
   const [borrowers, setBorrowers] = useState([]);
   const [searchResult, setSearchResult] = useState(null);
+  const [tableSearch, setTableSearch] = useState("");
   const [formData, setFormData] = useState({
     firstname: "",
     lastname: "",
@@ -31,19 +32,55 @@ export default function Borrowers() {
     if (!error) setBorrowers(data);
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (editingId) {
-      await supabase.from("borrowers").update(formData).eq("id", editingId);
-      Alert.fire("✅ Updated!", "Borrower details updated successfully.", "success");
+ async function handleSubmit(e) {
+  e.preventDefault();
+
+  const updatedData = { ...formData };
+  delete updatedData.id; // 🚫 remove id before updating
+
+  if (editingId) {
+    const { error } = await supabase
+      .from("borrowers")
+      .update(updatedData)
+      .eq("id", editingId);
+
+    if (!error) {
+      Swal.fire({
+  icon: "success",
+  title: "✅ Success",
+  text: "Borrower updated successfully!",
+  background: "#1a1f2e",
+  color: "#ffffff",
+  confirmButtonColor: "#00b894",
+});
+
+      fetchBorrowers();
+      resetForm();
+      setEditingId(null);
     } else {
-      await supabase.from("borrowers").insert([formData]);
-      Alert.fire("🎉 Success!", "New borrower added successfully.", "success");
+      console.error("Supabase Update Error:", error);
+      Swal.fire("❌ Error", "Failed to update borrower details.", "error");
     }
-    setEditingId(null);
-    resetForm();
-    fetchBorrowers();
+  } else {
+    const { error } = await supabase.from("borrowers").insert([formData]);
+    if (!error) {
+  Swal.fire({
+    icon: "success",
+    title: "🎉 Borrower Added Successfully!",
+    text: "The borrower was added to the system.",
+    background: "#1a1f2e", // 🖤 Dark background
+    color: "#ffffff",       // 🤍 White text
+    confirmButtonColor: "#00b894", // 💚 Green confirm button
+  });
+
+  fetchBorrowers();
+  resetForm();
+}
+
   }
+}
+
+
 
   function resetForm() {
     setFormData({
@@ -80,63 +117,85 @@ export default function Borrowers() {
       fetchBorrowers();
     }
   }
-
-  async function handleSearch() {
-    if (!searchId.trim()) {
-      setSearchResult(null);
-      return;
-    }
-
-    const { data: borrowerData } = await supabase
-      .from("borrowers")
-      .select("*")
-      .eq("id_no", searchId)
-      .single();
-
-    if (!borrowerData) {
-      Alert.fire("❌ Not Found", "No borrower found with that ID number.", "error");
-      setSearchResult(null);
-      return;
-    }
-
-    const { data: loans } = await supabase
-  .from("loan_list")
-  .select("*, loan_plan(months, interest_percentage)")
-  .eq("borrower_id", borrowerData.id)
-  .in("status", [3, 4]); // ✅ Only Released or Closed loans
-
-
-    let loanInfo = loans?.map((loan) => {
-      const amount = parseFloat(loan.amount);
-      const rate = parseFloat(loan.loan_plan?.interest_percentage);
-      const months = parseInt(loan.loan_plan?.months);
-      const totalPayable = amount + (amount * rate * months) / 100;
-      const monthly = totalPayable / months;
-      const releaseDate = loan.date_released
-  ? new Date(loan.date_released).toLocaleDateString()
-  : "Not Released";
-
-
-      return {
-        ref: loan.ref_no,
-        amount,
-        rate,
-        months,
-        totalPayable,
-        monthly,
-        releaseDate,
-        status:
-  loan.status === 4
-    ? "✅ Completed"
-    : loan.status === 3
-    ? "🕓 Awaiting Payments"
-    : "",
-
-      };
-    });
-
-    setSearchResult({ borrowerData, loanInfo });
+async function handleSearch() {
+  if (!searchId.trim()) {
+    setSearchResult(null);
+    return;
   }
+
+  // 🔹 Get borrower info
+  const { data: borrowerData } = await supabase
+    .from("borrowers")
+    .select("*")
+    .eq("id_no", searchId)
+    .single();
+
+  if (!borrowerData) {
+    Swal.fire({
+      icon: "error",
+      title: "❌ Not Found",
+      text: "No borrower found with that ID number.",
+      background: "#1a1f2e",
+      color: "#fff",
+    });
+    setSearchResult(null);
+    return;
+  }
+
+  // 🔹 Get loans (only released)
+  const { data: releasedLoans } = await supabase
+    .from("loan_list")
+    .select("*, loan_plan(months, interest_percentage)")
+    .eq("borrower_id", borrowerData.id)
+    .eq("status", 3); // ✅ Only Released loans
+
+  if (!releasedLoans || releasedLoans.length === 0) {
+    // 🟡 No released loans → show only borrower + guarantor details
+    setSearchResult({
+      borrowerData,
+      loanInfo: [],
+      hasReleasedLoan: false,
+    });
+    return;
+  }
+
+  // 🔹 Format loan info
+  let loanInfo = releasedLoans.map((loan) => {
+    const amount = parseFloat(loan.amount);
+    const rate = parseFloat(loan.loan_plan?.interest_percentage);
+    const months = parseInt(loan.loan_plan?.months);
+    const totalPayable = amount + (amount * rate * months) / 100;
+    const monthly = totalPayable / months;
+    const releaseDate = loan.date_released
+      ? new Date(loan.date_released).toLocaleDateString()
+      : "Not Released";
+
+    return {
+      ref: loan.ref_no,
+      amount,
+      rate,
+      months,
+      totalPayable,
+      monthly,
+      releaseDate,
+      status: "🟢 Released",
+    };
+  });
+
+  setSearchResult({
+    borrowerData,
+    loanInfo,
+    hasReleasedLoan: true,
+  });
+}
+
+const filteredBorrowers = borrowers.filter((b) =>
+  [b.id_no, b.firstname, b.lastname]
+    .join(" ")
+    .toLowerCase()
+    .includes(tableSearch.toLowerCase())
+);
+
 
   return (
     <DashboardLayout>
@@ -162,68 +221,66 @@ export default function Borrowers() {
           </button>
         </div>
 
-        {/* 🧾 Search Result Section */}
         {searchResult && (
-          <div className="bg-[#1a2238] p-6 mb-8 rounded-lg shadow-lg">
-            <h3 className="text-xl font-semibold mb-2 text-yellow-400">
-              🔎 Borrower Information
-            </h3>
-            <div className="mb-3">
-              <p>
-                <strong>Name:</strong> {searchResult.borrowerData.firstname}{" "}
-                {searchResult.borrowerData.lastname}
-              </p>
-              <p>
-                <strong>ID No:</strong> {searchResult.borrowerData.id_no}
-              </p>
-              <p>
-                <strong>Contact:</strong> {searchResult.borrowerData.contact_no}
-              </p>
-              <p>
-                <strong>Email:</strong> {searchResult.borrowerData.email}
-              </p>
-            </div>
+  <div className="bg-[#1a2238] p-6 mb-8 rounded-lg shadow-lg">
+    <h3 className="text-xl font-semibold mb-2 text-yellow-400">
+      🔎 Borrower Information
+    </h3>
 
-            <h4 className="mt-4 font-semibold text-yellow-400">💰 Loan Summary:</h4>
-            {searchResult.loanInfo && searchResult.loanInfo.length > 0 ? (
-              <table className="w-full mt-4 bg-[#2a3355] rounded-lg overflow-hidden text-sm">
-                <thead className="bg-[#353f66] text-yellow-400 text-left">
-                  <tr>
-                    <th className="p-3">Ref No</th>
-                    <th className="p-3">Amount</th>
-                    <th className="p-3">Interest %</th>
-                    <th className="p-3">Months</th>
-                    <th className="p-3">Total Payable</th>
-                    <th className="p-3">Monthly</th>
-                    <th className="p-3">Released Date</th>
-                    <th className="p-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {searchResult.loanInfo.map((loan, i) => (
-                    <tr
-                      key={i}
-                      className="border-t border-gray-700 hover:bg-[#2f3a5c]"
-                    >
-                      <td className="p-3">{loan.ref}</td>
-                      <td className="p-3">Rs.{loan.amount.toLocaleString()}</td>
-                      <td className="p-3">{loan.rate}%</td>
-                      <td className="p-3">{loan.months}</td>
-                      <td className="p-3">Rs.{loan.totalPayable.toLocaleString()}</td>
-                      <td className="p-3">Rs.{loan.monthly.toLocaleString()}</td>
-                      <td className="p-3">{loan.releaseDate}</td>
-                      <td className="p-3">{loan.status}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p className="text-gray-400 mt-2">
-                No active or completed loans found.
-              </p>
-            )}
-          </div>
-        )}
+    <div className="mb-3">
+      <p><strong>Name:</strong> {searchResult.borrowerData.firstname} {searchResult.borrowerData.lastname}</p>
+      <p><strong>ID No:</strong> {searchResult.borrowerData.id_no}</p>
+      <p><strong>Contact:</strong> {searchResult.borrowerData.contact_no}</p>
+      <p><strong>Email:</strong> {searchResult.borrowerData.email}</p>
+
+      {!searchResult.hasReleasedLoan && (
+        <>
+          <p><strong>Address:</strong> {searchResult.borrowerData.address}</p>
+          <h4 className="text-yellow-400 mt-3">🧾 Guarantor Details</h4>
+          <p><strong>Name:</strong> {searchResult.borrowerData.guarantor_name}</p>
+          <p><strong>Contact:</strong> {searchResult.borrowerData.guarantor_contact}</p>
+          <p><strong>Address:</strong> {searchResult.borrowerData.guarantor_address}</p>
+          <p><strong>ID No:</strong> {searchResult.borrowerData.guarantor_id_no}</p>
+        </>
+      )}
+    </div>
+
+    {searchResult.hasReleasedLoan && (
+      <>
+        <h4 className="mt-4 font-semibold text-yellow-400">💰 Loan Summary:</h4>
+        <table className="w-full mt-4 bg-[#2a3355] rounded-lg overflow-hidden text-sm">
+          <thead className="bg-[#353f66] text-yellow-400 text-left">
+            <tr>
+              <th className="p-3">Ref No</th>
+              <th className="p-3">Amount</th>
+              <th className="p-3">Interest %</th>
+              <th className="p-3">Months</th>
+              <th className="p-3">Total Payable</th>
+              <th className="p-3">Monthly</th>
+              <th className="p-3">Released Date</th>
+              <th className="p-3">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {searchResult.loanInfo.map((loan, i) => (
+              <tr key={i} className="border-t border-gray-700 hover:bg-[#2f3a5c]">
+                <td className="p-3">{loan.ref}</td>
+                <td className="p-3">Rs.{loan.amount.toLocaleString()}</td>
+                <td className="p-3">{loan.rate}%</td>
+                <td className="p-3">{loan.months}</td>
+                <td className="p-3">Rs.{loan.totalPayable.toLocaleString()}</td>
+                <td className="p-3">Rs.{loan.monthly.toLocaleString()}</td>
+                <td className="p-3">{loan.releaseDate}</td>
+                <td className="p-3">{loan.status}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </>
+    )}
+  </div>
+)}
+
 
         {/* 📋 Borrower Form */}
         <form onSubmit={handleSubmit} className="bg-[#1a2238] p-6 rounded-lg mb-10">
@@ -332,7 +389,27 @@ export default function Borrowers() {
 
         {/* 📊 Borrowers Table */}
         <div className="bg-[#1a2238] p-6 rounded-lg shadow-lg mt-10">
-          <h3 className="text-yellow-400 font-semibold mb-3">📋 All Borrowers</h3>
+        <div className="flex justify-between items-center mb-5">
+  <h3 className="text-yellow-400 font-semibold text-lg flex items-center gap-2">
+    📋 All Borrowers
+  </h3>
+
+  <div className="relative">
+    <input
+      type="text"
+      placeholder="🔍 Search by ID / Name..."
+      value={tableSearch}
+      onChange={(e) => setTableSearch(e.target.value)}
+      className="pl-10 pr-4 py-2 w-64 rounded-lg bg-gradient-to-r from-[#2b2f45] to-[#202437]
+                 text-white placeholder-gray-400 border border-[#3a3f58]
+                 focus:outline-none focus:ring-2 focus:ring-[#00b894]
+                 transition-all duration-200 shadow-md"
+    />
+    <span className="absolute left-3 top-2.5 text-gray-400 text-lg">🔎</span>
+  </div>
+</div>
+
+
           <div className="overflow-x-auto">
             <table className="w-full text-sm border-collapse">
               <thead className="bg-[#353f66] text-yellow-400">
@@ -351,8 +428,9 @@ export default function Borrowers() {
                 </tr>
               </thead>
               <tbody>
-                {borrowers.length > 0 ? (
-                  borrowers.map((b, i) => (
+               {filteredBorrowers.length > 0 ? (
+  filteredBorrowers.map((b, i) => (
+
                     <tr
                       key={i}
                       className="border-t border-gray-700 hover:bg-[#2f3a5c] transition-colors"
@@ -367,20 +445,25 @@ export default function Borrowers() {
                       <td className="p-3">{b.guarantor_contact}</td>
                       <td className="p-3">{b.guarantor_address}</td>
                       <td className="p-3">{b.guarantor_id_no}</td>
-                      <td className="p-3 flex flex-wrap gap-2">
-                        <button
-                          onClick={() => handleEdit(b)}
-                          className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDelete(b.id)}
-                          className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded"
-                        >
-                          Delete
-                        </button>
-                      </td>
+                     <td className="p-3">
+  <div className="flex flex-row gap-2 items-center">
+    <button
+      onClick={() => handleEdit(b)}
+      className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded transition"
+    >
+      Edit
+    </button>
+    <button
+      onClick={() => handleDelete(b.id)}
+      className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded transition"
+    >
+      Delete
+    </button>
+  </div>
+</td>
+
+
+
                     </tr>
                   ))
                 ) : (
