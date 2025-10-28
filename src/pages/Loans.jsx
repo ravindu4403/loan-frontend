@@ -253,20 +253,19 @@ export default function Loans() {
 }
 async function handleStatusChange(loanId, newStatus) {
   if (newStatus === 3) {
-    // Loan Released 🟢
+    // 🟢 Loan Released
     const now = new Date();
-    const releaseDate = now.toISOString().split("T")[0]; // yyyy-mm-dd
+    const releaseDate = now.toISOString().split("T")[0]; // yyyy-mm-dd format
 
-    const firstPayment = new Date(now);
-    firstPayment.setDate(firstPayment.getDate() + 1);
-    const firstPaymentDate = firstPayment.toISOString().split("T")[0];
-    const nextPaymentDate = firstPaymentDate;
+    // 🔁 Both first and next payment dates = release date itself
+    const firstPaymentDate = releaseDate;
+    const nextPaymentDate = releaseDate;
 
     const { error } = await supabase
       .from("loan_list")
       .update({
-        status: 3,
-        date_released: releaseDate, // set only now
+        status: 3, // Released
+        date_released: releaseDate,
         first_payment_date: firstPaymentDate,
         next_payment_date: nextPaymentDate,
         paid_days: 0,
@@ -275,24 +274,32 @@ async function handleStatusChange(loanId, newStatus) {
 
     if (error) {
       console.error(error);
-      Swal.fire("Error", "Failed to release loan!", "error");
+      Swal.fire({
+        icon: "error",
+        title: "Error",
+        text: "Failed to release loan!",
+        background: "#1a1f2e",
+        color: "#fff",
+      });
       return;
     }
 
     Swal.fire({
       icon: "success",
-      title: "Loan Released!",
-      text: `Loan released successfully on ${releaseDate}`,
+      title: "✅ Loan Released!",
+      text: `Loan successfully released on ${releaseDate}`,
       background: "#1a1f2e",
       color: "#fff",
     });
-  } else if (newStatus === 1) {
-    // Loan Pending 🟡
+  }
+
+  // 🟡 Revert back to Pending
+  else if (newStatus === 1) {
     const { error } = await supabase
       .from("loan_list")
       .update({
         status: 1,
-        date_released: null, // reset
+        date_released: null,
         first_payment_date: null,
         next_payment_date: null,
         paid_days: 0,
@@ -301,10 +308,25 @@ async function handleStatusChange(loanId, newStatus) {
 
     if (error) {
       console.error(error);
-      Swal.fire("Error", "Failed to update loan status!", "error");
+      Swal.fire({
+        icon: "error",
+        title: "Error",
+        text: "Failed to update loan status!",
+        background: "#1a1f2e",
+        color: "#fff",
+      });
       return;
     }
+
+    Swal.fire({
+      icon: "info",
+      title: "Loan Reset!",
+      text: "Loan status reverted to Pending.",
+      background: "#1a1f2e",
+      color: "#fff",
+    });
   }
+
 
   fetchLoans(); // refresh UI
 }

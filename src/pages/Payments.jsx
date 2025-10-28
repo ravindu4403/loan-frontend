@@ -53,81 +53,113 @@ export default function Payments() {
   }
 
   // 🔹 When a loan is selected
-  async function handleLoanChange(e) {
-    const loanId = e.target.value;
-    setSelectedLoan(loanId);
-    if (!loanId) return;
+  // 🔹 When a loan is selected
+async function handleLoanChange(e) {
+  const loanId = e.target.value;
+  setSelectedLoan(loanId);
+  if (!loanId) return;
 
-    const { data: loanData, error } = await supabase
-      .from("loan_list")
-      .select(`
-        id, ref_no, amount, rate, term, next_payment_date, date_released, first_payment_date, paid_days,
-        borrowers(firstname, lastname, id_no)
-      `)
-      .eq("id", loanId)
-      .single();
+  const { data: loanData, error } = await supabase
+    .from("loan_list")
+    .select(`
+      id, ref_no, amount, rate, term, next_payment_date, 
+      date_released, first_payment_date, paid_days,
+      borrowers(firstname, lastname, id_no)
+    `)
+    .eq("id", loanId)
+    .single();
 
-    if (error || !loanData) return;
+  if (error || !loanData) return;
 
-    const amount = Number(loanData.amount);
-    const months = Number(loanData.term);
-    const rate = Number(loanData.rate);
-    const totalInterest = amount * (rate / 100) * months;
-    const totalPayable = amount + totalInterest;
-    const totalDays = months * 30;
-    const dailyPayment = totalPayable / totalDays;
+  // 🔹 Basic loan details
+  const amount = Number(loanData.amount);
+  const months = Number(loanData.term);
+  const rate = Number(loanData.rate);
+  const totalInterest = amount * (rate / 100) * months;
+  const totalPayable = amount + totalInterest;
+  const totalDays = months * 30;
+  const dailyPayment = totalPayable / totalDays;
 
-    const { count: paidDaysCount } = await supabase
-      .from("payments")
-      .select("*", { count: "exact", head: true })
-      .eq("loan_id", loanId);
+  // 🔹 Count how many payments already made
+  const { count: paidDaysCount } = await supabase
+    .from("payments")
+    .select("*", { count: "exact", head: true })
+    .eq("loan_id", loanId);
 
-    let nextPaymentDate;
-    if (loanData.first_payment_date) {
-      const firstPay = new Date(loanData.first_payment_date);
-      firstPay.setDate(firstPay.getDate() + (loanData.paid_days || 0) + 1);
-      nextPaymentDate = firstPay.toISOString().split("T")[0];
-    } else {
-      const release = new Date(loanData.date_released);
-      release.setDate(release.getDate() + 1);
-      nextPaymentDate = release.toISOString().split("T")[0];
-    }
+  const paidDays = paidDaysCount || loanData.paid_days || 0;
 
-    const releaseDate = loanData.date_released
-      ? new Date(loanData.date_released)
-      : new Date();
+  // 🔹 Calculate based on release date
+  let firstPaymentDate = "N/A";
+  let nextPaymentDate = "N/A";
 
-    const remainingDays = Math.max(0, totalDays - (paidDaysCount || 0));
+  if (loanData.date_released) {
+    const release = new Date(loanData.date_released);
 
-    setLoanSummary({
-      loanId: loanData.id,
-      payeeName: `${loanData.borrowers?.firstname || ""} ${loanData.borrowers?.lastname || ""}`,
-      borrowerIdNo: loanData.borrowers?.id_no || "",
-      loanAmount: amount.toFixed(2),
-      interestRate: rate,
-      totalPayable: totalPayable.toFixed(2),
-      dailyPayment: dailyPayment.toFixed(2),
-      nextPaymentDate,
-      releaseDate: releaseDate.toLocaleDateString("en-CA"),
-      paidDays: paidDaysCount || 0,
-      firstPaymentDate: loanData.first_payment_date
-        ? new Date(loanData.first_payment_date).toLocaleDateString("en-CA")
-        : "N/A",
-      remainingDays,
-    });
+    // ✅ First payment = release + 1 day
+    const firstPay = new Date(release);
+    firstPay.setDate(firstPay.getDate() + 1);
+    firstPaymentDate = firstPay.toLocaleDateString("en-CA");
 
-    setFormData({
-      ...formData,
-      loan_id: loanData.id,
-      payee: `${loanData.borrowers?.firstname || ""} ${loanData.borrowers?.lastname || ""}`,
-      amount: dailyPayment.toFixed(2),
-      penalty_amount: 0,
-    });
+    // ✅ Next payment = release + (paid_days + 1)
+    const nextPay = new Date(release);
+    nextPay.setDate(nextPay.getDate() + paidDays + 1);
+   nextPaymentDate = nextPay.toLocaleDateString("en-CA");
   }
 
-  // 🔹 Add or update payment
- // 🔹 Add or update payment
-// 🔹 Add or update payment
+  // ✅ Auto-update DB if mismatch (ensure sync)
+  if (
+    loanData.first_payment_date !== firstPaymentDate ||
+    loanData.next_payment_date !== nextPaymentDate
+  ) {
+    await supabase
+      .from("loan_list")
+      .update({
+        first_payment_date: firstPaymentDate,
+        next_payment_date: nextPaymentDate,
+      })
+      .eq("id", loanData.id);
+  }
+
+  // 🔹 Calculate remaining days
+  const releaseDate = loanData.date_released
+    ? new Date(loanData.date_released)
+    : new Date();
+  const remainingDays = Math.max(0, totalDays - paidDays);
+
+  // 🔹 Update Loan Summary section
+  setLoanSummary({
+    loanId: loanData.id,
+    payeeName: `${loanData.borrowers?.firstname || ""} ${
+      loanData.borrowers?.lastname || ""
+    }`,
+    borrowerIdNo: loanData.borrowers?.id_no || "",
+    loanAmount: amount.toFixed(2),
+    interestRate: rate,
+    totalPayable: totalPayable.toFixed(2),
+    dailyPayment: dailyPayment.toFixed(2),
+    firstPaymentDate,
+    nextPaymentDate,
+   releaseDate: loanData.date_released
+  ? loanData.date_released.split("T")[0]
+  : "N/A",
+
+
+    paidDays,
+    remainingDays,
+  });
+
+  // 🔹 Update form defaults
+  setFormData({
+    ...formData,
+    loan_id: loanData.id,
+    payee: `${loanData.borrowers?.firstname || ""} ${
+      loanData.borrowers?.lastname || ""
+    }`,
+    amount: dailyPayment.toFixed(2),
+    penalty_amount: 0,
+  });
+}
+
 async function handleSubmit(e) {
   e.preventDefault();
 
@@ -143,7 +175,7 @@ async function handleSubmit(e) {
     return;
   }
 
-  // ✅ UPDATE mode
+  // UPDATE mode
   if (editing) {
     const { error } = await supabase
       .from("payments")
@@ -165,31 +197,36 @@ async function handleSubmit(e) {
       });
       setEditing(false);
       fetchPayments();
+      await handleLoanChange({ target: { value: formData.loan_id } });
+
     }
     return;
   }
 
-  // 🔹 Fetch loan info
-  const { data: loanData } = await supabase
+  // 🟢 STEP 1: Get current loan info
+  const { data: loanData, error } = await supabase
     .from("loan_list")
-    .select("id, first_payment_date, next_payment_date, paid_days, term, date_released")
+    .select("id, date_released, first_payment_date, next_payment_date, paid_days, term")
     .eq("id", formData.loan_id)
     .single();
 
-  if (!loanData) return;
+  if (error || !loanData) return;
 
-  // --------------------------------------
-  // 🧩 STEP 1: Initialize first/next payment
-  // --------------------------------------
-  let firstPaymentDate = loanData.first_payment_date;
-  let nextPaymentDate = loanData.next_payment_date;
+  // 🧩 STEP 2: Base everything on release date
+  const release = new Date(loanData.date_released);
+  const firstPay = new Date(release);
+  firstPay.setDate(firstPay.getDate() + 1); // first = release + 1
 
-  if (!firstPaymentDate) {
-    const release = new Date(loanData.date_released);
-    release.setDate(release.getDate() + 1);
-    firstPaymentDate = release.toISOString().split("T")[0];
-    nextPaymentDate = firstPaymentDate; // ✅ first = next at the start
+  let firstPaymentDate = firstPay.toISOString().split("T")[0];
+  let paidDays = loanData.paid_days || 0;
 
+  // 🗓️ Next payment = first + paidDays
+  const nextPay = new Date(release);
+nextPay.setDate(nextPay.getDate() + (loanData.paid_days || 0) + 1); // ✅ next = release + (paid_days + 1
+  let nextPaymentDate = nextPay.toISOString().split("T")[0];
+
+  // ✅ Update first + next if not set yet
+  if (!loanData.first_payment_date || !loanData.next_payment_date) {
     await supabase
       .from("loan_list")
       .update({
@@ -199,9 +236,7 @@ async function handleSubmit(e) {
       .eq("id", loanData.id);
   }
 
-  // --------------------------------------
-  // 🧾 STEP 2: Add payment record
-  // --------------------------------------
+  // 🧾 STEP 3: Insert new payment record
   const { error: payError } = await supabase.from("payments").insert([
     {
       loan_id: formData.loan_id,
@@ -216,34 +251,33 @@ async function handleSubmit(e) {
     return;
   }
 
-  // --------------------------------------
-  // 🔄 STEP 3: Update next payment + paid_days
-  // --------------------------------------
-  const paidDays = (loanData.paid_days || 0) + 1;
-
-  // 🧮 If this was the first payment, next = first_payment_date + 1 day
-  const firstPayDate = new Date(firstPaymentDate);
-  const newNextPayment = new Date(firstPayDate);
-  newNextPayment.setDate(firstPayDate.getDate() + paidDays);
+  // 🔄 STEP 4: Increment paid days and recalculate next payment
+  const newPaidDays = paidDays + 1;
+  const nextDate = new Date(firstPay);
+  nextDate.setDate(nextDate.getDate() + newPaidDays);
+  const newNextPayment = nextDate.toISOString().split("T")[0];
 
   await supabase
     .from("loan_list")
     .update({
-      paid_days: paidDays,
-      next_payment_date: newNextPayment.toISOString().split("T")[0],
+      paid_days: newPaidDays,
+      next_payment_date: newNextPayment,
     })
     .eq("id", loanData.id);
 
-  // --------------------------------------
-  // ✅ STEP 4: Auto-close loan if done
-  // --------------------------------------
-  const totalDays = (loanData.term || 0) * 30;
-  if (paidDays >= totalDays) {
-    await supabase
-      .from("loan_list")
-      .update({ status: 4 }) // closed
-      .eq("id", loanData.id);
+  // 🧠 Update UI immediately
+  setLoanSummary((prev) => ({
+    ...prev,
+    paidDays: newPaidDays,
+    nextPaymentDate: newNextPayment,
+    firstPaymentDate: firstPaymentDate,
+    releaseDate: loanData.date_released,
+  }));
 
+  // ✅ Auto-close loan if all days done
+  const totalDays = (loanData.term || 0) * 30;
+  if (newPaidDays >= totalDays) {
+    await supabase.from("loan_list").update({ status: 4 }).eq("id", loanData.id);
     Swal.fire({
       title: "🎉 Loan Fully Paid!",
       text: "This loan is now closed automatically.",
@@ -254,22 +288,23 @@ async function handleSubmit(e) {
     });
   }
 
-  // --------------------------------------
-  // 🎯 STEP 5: Refresh
-  // --------------------------------------
+  // 🎯 Done
   Swal.fire({
     title: "💰 Payment Added!",
-    text: "Payment recorded successfully.",
+    text: "Next payment date updated based on release date.",
     icon: "success",
     confirmButtonColor: "#22c55e",
     background: "#1a2238",
     color: "#fff",
   });
 
-  await handleLoanChange({ target: { value: formData.loan_id } });
   await fetchPayments();
+  await fetchLoans();
+await handleLoanChange({ target: { value: formData.loan_id } });
+
   setFormData({ id: null, loan_id: "", payee: "", amount: "", penalty_amount: 0 });
 }
+
 
 
 
