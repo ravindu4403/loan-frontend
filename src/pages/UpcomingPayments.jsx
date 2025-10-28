@@ -294,83 +294,80 @@ export default function UpcomingPayments() {
           />
         </div>
 
-        {/* 📋 Table */}
-        <div className="bg-[#1a2238] rounded-xl shadow-lg overflow-x-auto">
-          {loading ? (
-            <div className="py-16 text-center text-gray-400">
-              Loading upcoming payments...
-            </div>
-          ) : (
-            <table className="w-full text-sm border-collapse">
-              <thead className="bg-[#2f3a5c] text-yellow-400 uppercase text-xs">
-                <tr>
-                  <th className="p-3 text-left">Borrower</th>
-                  <th className="p-3 text-left">NIC</th>
-                  <th className="p-3 text-left">Loan Ref</th>
-                  <th className="p-3 text-left">Release Date</th>
-                  <th className="p-3 text-left">Next Payment</th>
-                  <th className="p-3 text-left">Due Date</th>
-                  <th className="p-3 text-left">Days Left</th>
-                  <th className="p-3 text-left">Remaining Days</th>
-                  <th className="p-3 text-left">Status</th>
-                  <th className="p-3 text-center">Action</th>
-                </tr>
-              </thead>
-              <AnimatePresence>
-                <tbody>
-                  {filtered.length > 0 ? (
-                    filtered.map((l, i) => (
-                      <motion.tr
-                        key={i}
-                        initial={{ opacity: 0, y: 5 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -5 }}
-                        className={`border-b border-gray-700 hover:bg-[#2f3a5c] transition-all ${
-                          l.label === "Overdue" ? "bg-red-900/20" : ""
-                        }`}
-                      >
-                        <td className="p-3">{l.borrowerName}</td>
-                        <td className="p-3">{l.idCard}</td>
-                        <td className="p-3 text-yellow-300 font-semibold">
-                          {l.refNo}
-                        </td>
-                        <td className="p-3">{l.releaseDate}</td>
-                        <td className="p-3">{l.nextPayment}</td>
-                        <td className="p-3">{l.dueDate}</td>
-                        <td className="p-3">{l.daysLeft}</td>
-                        <td className="p-3">{l.remainingDays}</td>
-                        <td className="p-3">
-                          <span
-                            className={`px-3 py-1 rounded-full flex items-center gap-2 justify-center w-fit ${l.color}`}
-                          >
-                            {l.icon}
-                            {l.label}
-                          </span>
-                        </td>
-                        <td className="p-3 text-center">
-                          {l.label === "Overdue" && (
-                            <button className="bg-yellow-500 hover:bg-yellow-600 text-black px-3 py-1 rounded-md flex items-center gap-1 mx-auto text-xs font-medium">
-                              <Bell size={13} /> Remind
-                            </button>
-                          )}
-                        </td>
-                      </motion.tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td
-                        colSpan="10"
-                        className="p-5 text-center text-gray-400 italic"
-                      >
-                        No upcoming payments found.
-                      </td>
-                    </tr>
+       {/* 📋 Table (Responsive for Mobile) */}
+<div className="bg-[#1a2238] rounded-xl shadow-lg overflow-x-auto max-w-full">
+  {loading ? (
+    <div className="py-16 text-center text-gray-400 text-sm md:text-base">
+      Loading upcoming payments...
+    </div>
+  ) : (
+    <table className="w-full text-xs sm:text-sm border-collapse min-w-[600px]">
+      <thead className="bg-[#2f3a5c] text-yellow-400 uppercase sticky top-0 z-10 shadow-md text-[11px] sm:text-xs">
+        <tr>
+          <th className="p-2 sm:p-3 text-left">Borrower</th>
+          <th className="p-2 sm:p-3 text-left">NIC</th>
+          <th className="p-2 sm:p-3 text-left">Loan Ref</th>
+          <th className="p-2 sm:p-3 text-left">Release Date</th>
+          <th className="p-2 sm:p-3 text-left">Next Payment</th>
+          <th className="p-2 sm:p-3 text-left">Due Date</th>
+          <th className="p-2 sm:p-3 text-left">Days Left</th>
+          <th className="p-2 sm:p-3 text-left">Status</th>
+          <th className="p-2 sm:p-3 text-center">Action</th>
+        </tr>
+      </thead>
+      <AnimatePresence>
+        <tbody>
+          {filtered.length > 0 ? (
+            filtered.map((l, i) => (
+              <motion.tr
+                key={i}
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -5 }}
+                className={`border-b border-gray-700 hover:bg-[#2f3a5c] transition-all ${
+                  l.label === "Overdue" ? "bg-red-900/20" : ""
+                }`}
+              >
+                <td className="p-2 sm:p-3 whitespace-nowrap">{l.borrowerName}</td>
+                <td className="p-2 sm:p-3 whitespace-nowrap">{l.idCard}</td>
+                <td className="p-2 sm:p-3 text-yellow-300 font-semibold">{l.refNo}</td>
+                <td className="p-2 sm:p-3">{l.releaseDate}</td>
+                <td className="p-2 sm:p-3">{l.nextPayment}</td>
+                <td className="p-2 sm:p-3">{l.dueDate}</td>
+                <td className="p-2 sm:p-3">{l.daysLeft}</td>
+                <td className="p-2 sm:p-3">
+                  <span
+                    className={`px-2 sm:px-3 py-1 rounded-full flex items-center gap-1 justify-center w-fit text-[10px] sm:text-xs ${l.color}`}
+                  >
+                    {l.icon}
+                    {l.label}
+                  </span>
+                </td>
+                <td className="p-2 sm:p-3 text-center">
+                  {l.label === "Overdue" && (
+                    <button className="bg-yellow-500 hover:bg-yellow-600 text-black px-2 sm:px-3 py-1 rounded-md flex items-center gap-1 mx-auto text-[10px] sm:text-xs font-medium">
+                      <Bell size={12} /> Remind
+                    </button>
                   )}
-                </tbody>
-              </AnimatePresence>
-            </table>
+                </td>
+              </motion.tr>
+            ))
+          ) : (
+            <tr>
+              <td
+                colSpan="10"
+                className="p-5 text-center text-gray-400 italic"
+              >
+                No upcoming payments found.
+              </td>
+            </tr>
           )}
-        </div>
+        </tbody>
+      </AnimatePresence>
+    </table>
+  )}
+</div>
+
       </div>
     </DashboardLayout>
   );
